@@ -2,36 +2,42 @@
 
 library(microdatasus)
 
-sinasc_all <- fetch_datasus(
-  year_start = 2024, 
-  year_end = 2024, 
-  uf = "MG", 
-  information_system = "SINASC"
-)
+if(file.exists("data/sinasc.rds")) {
+    sinasc <- readRDS("data/sinasc.rds")
+} else {
+    sinasc <- fetch_datasus(
+        year_start = 2024, 
+        year_end = 2024, 
+        uf = "MG", 
+        information_system = "SINASC"
+    )
+    saveRDS(sinasc, "data/sinasc.rds")
+}
 
-dim(sinasc_all)
 
-names(sinasc_all)
+dim(sinasc)
 
-table(sinasc_all$CONSULTAS)
+names(sinasc)
 
-table(sinasc_all$APGAR1)
-table(as.numeric(sinasc_all$APGAR1)<=6)
+table(sinasc$CONSULTAS)
 
-summary(as.numeric(sinasc_all$PESO)/1000)
+table(sinasc$APGAR1)
+table(as.numeric(sinasc$APGAR1)<=6)
 
-tbmuni <- sort(unique(sinasc_all$CODMUNRES))
+summary(as.numeric(sinasc$PESO)/1000)
+
+tbmuni <- sort(unique(sinasc$CODMUNRES))
 length(tbmuni)
 head(tbmuni)
 
-table(sinasc_all$APGAR1,
-      sinasc_all$APGAR5)
+table(sinasc$APGAR1,
+      sinasc$APGAR5)
 
 dataf <- data.frame(
-    peso = as.numeric(sinasc_all$PESO)/1000,
-    ap1b = (as.numeric(sinasc_all$APGAR1)<=6)+0L,
-    ap5b = (as.numeric(sinasc_all$APGAR5)<=6)+0L,
-    mun  = pmatch(sinasc_all$CODMUNRES,
+    peso = as.numeric(sinasc$PESO)/1000,
+    ap1b = (as.numeric(sinasc$APGAR1)<=6)+0L,
+    ap5b = (as.numeric(sinasc$APGAR5)<=6)+0L,
+    mun  = pmatch(sinasc$CODMUNRES,
                   tbmuni,
                   duplicates.ok = TRUE)
 )
@@ -155,12 +161,12 @@ ggplot() +
        caption = "Source: IBGE via geobr") +
     theme_minimal()
 
-head(sinasc_all, 2)
+head(sinasc, 2)
 
-str(sinasc_all$CODMUNRES)
+str(sinasc$CODMUNRES)
 
 id_map <- pmatch(
-    x = sinasc_all$CODMUNRES,
+    x = sinasc$CODMUNRES,
     table = substr(mg_muni$code_muni, 1,6),
     duplicates.ok = TRUE)
 summary(id_map)
@@ -199,6 +205,7 @@ data3 <- data.frame(
     ap1 = c(dataf$ap1, rep(NA, n),  rep(NA, n)),
     ap5 = c(rep(NA, n), dataf$ap5,  rep(NA, n)),
     zero= c(rep(NA, n), rep(NA,n),  rep(0, n)),
+    lnk = rep(1:3, each = n),
     b0_a1 = rep(c(1,0,0), c(n,n,n)),
     b0_a5 = rep(c(0,1,0), c(n,n,n)),
     peso1 = c(dataf$peso, rep(NA, n), dataf$peso),
@@ -216,13 +223,18 @@ fff <- list(ap1, ap5, zero) ~ -1 +
       hyper = list(theta = list(initial = -20, fixed = TRUE))) +
     f(vi_cp, copy = 'vi', fixed = FALSE)
 
+
 fit3z <- inla(
     formula = fff, 
     family = c(rep("binomial", 2), "gaussian"),
     control.family = list(
         list(),
         list(),
-        list(hyper = list(theta = list(initial = 20, fixed = TRUE)))),
+        list(hyper = list(prec = list(initial = 20, fixed = TRUE)))),
     data = data3,
-    control.predictor = list(link = 1)
+    control.mode = list(
+        theta = c(3, 1.6, 0),
+        restart = TRUE),
+    control.predictor = list(link = lnk),
+    verbose = TRUE##, inla.call = 'remote'
 )
