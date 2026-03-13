@@ -1,10 +1,11 @@
-## remotes::install_github("rfsaldanha/microdatasus")
-
-library(microdatasus)
+library(INLA)
+library(sf)
 
 if(file.exists("data/sinasc.rds")) {
     sinasc <- readRDS("data/sinasc.rds")
 } else {
+## remotes::install_github("rfsaldanha/microdatasus")
+    library(microdatasus)
     sinasc <- fetch_datasus(
         year_start = 2024, 
         year_end = 2024, 
@@ -14,6 +15,31 @@ if(file.exists("data/sinasc.rds")) {
     saveRDS(sinasc, "data/sinasc.rds")
 }
 
+dim(sinasc)
+
+names(sinasc)
+
+## MAPA
+##
+if(file.exists("maps/mg_mun.shp")) {
+    mg_mun <- st_read("maps/mg_mun.shp")
+} else {
+    library(geobr)
+    mg_mun <- read_municipality(
+        code_muni = "MG", 
+        year = 2020, 
+        showProgress = TRUE
+    )
+    st_write(mg_mun, "maps/mg_mun.shp")
+}
+
+if(!file.exists("grafo")) {
+    library(spdep)
+    viz <- poly2nb(mg_mun)
+    nb2INLA(file = "grafo", nb = viz) 
+}
+
+table(sinasc$APGAR1)
 
 dim(sinasc)
 
@@ -26,37 +52,31 @@ table(as.numeric(sinasc$APGAR1)<=6)
 
 summary(as.numeric(sinasc$PESO)/1000)
 
-tbmuni <- sort(unique(sinasc$CODMUNRES))
-length(tbmuni)
-head(tbmuni)
-
 table(sinasc$APGAR1,
       sinasc$APGAR5)
 
-dataf <- data.frame(
-    peso = as.numeric(sinasc$PESO)/1000,
-    ap1b = (as.numeric(sinasc$APGAR1)<=6)+0L,
-    ap5b = (as.numeric(sinasc$APGAR5)<=6)+0L,
-    mun  = pmatch(sinasc$CODMUNRES,
-                  tbmuni,
-                  duplicates.ok = TRUE)
+dat0 <- data.frame(
+    ap1 = (as.integer(sinasc$APGAR1)<=7)+0L,
+    ap5 = (as.integer(sinasc$APGAR5)<=7)+0L,
+    peso= as.numeric(sinasc$PESO)/1000,
+    area= pmatch(
+        x = sinasc$CODMUNRES,
+        table = substr(mg_mun$code_mn, 1,6),
+        duplicates.ok = TRUE)
 )
 
-str(dataf)
-
-summary(dataf)
-
-library(INLA)
+summary(dat0)
 
 fit0a1 <- inla(
-    formula = ap1b ~ peso,
+    formula = ap1 ~ peso,
     family = "binomial",
-    data = dataf,
+    data = dat0,
     control.predictor = list(link = 1))
+
 fit0a5 <- inla(
-    formula = ap5b ~ peso,
+    formula = ap5 ~ peso,
     family = "binomial",
-    data = dataf,
+    data = dat0,
     control.predictor = list(link = 1))
 
 fit0a1$summary.fixed
@@ -65,14 +85,14 @@ fit0a5$summary.fixed
 ## m1: eta_i = beta_0 + beta_1 * peso_i + u_mun(i)
 ##     P(y_i=1) = p_i = 1/(1+exp(-eta_i))
 fit1a1 <- inla(
-    formula = ap1b ~ peso + f(mun, model = 'iid'),
+    formula = ap1 ~ peso + f(area, model = 'iid'),
     family = "binomial",
-    data = dataf,
+    data = dat0,
     control.predictor = list(link = 1))
 fit1a5 <- inla(
-    formula = ap5b ~ peso + f(mun, model = 'iid'),
+    formula = ap5 ~ peso + f(area, model = 'iid'),
     family = "binomial",
-    data = dataf,
+    data = dat0,
     control.predictor = list(link = 1))
 
 fit1a1$summary.fixed
@@ -81,14 +101,14 @@ fit1a5$summary.fixed
 fit1a1$summary.hyperpar
 fit1a5$summary.hyperpar
 
-n <- nrow(dataf)
+n <- nrow(dat0)
 dat2 <- data.frame(
-    ap1 = c(dataf$ap1, rep(NA, n)),
-    ap5 = c(rep(NA, n), dataf$ap5),
+    ap1 = c(dat0$ap1, rep(NA, n)),
+    ap5 = c(rep(NA, n), dat0$ap5),
     b0_a1 = c(rep(1., n), rep(NA, n)), ##rep(1:0, c(n,n)),
     b0_a5 = c(rep(NA, n), rep(1., n)), ##rep(0:1, c(n,n)),
-    peso_a1 = c(dataf$peso, rep(NA, n)),
-    peso_a5 = c(rep(NA, n), dataf$peso)
+    peso_a1 = c(dat0$peso, rep(NA, n)),
+    peso_a5 = c(rep(NA, n), dat0$peso)
 )
 
 fit0_b <- inla(
@@ -103,13 +123,14 @@ fit0a5$summary.fixed
 
 fit0_b$summary.fixed
 
-dat2$mun1 <- c(dataf$mun, rep(NA,n))
-dat2$mun2 <- c(rep(NA,n), dataf$mun)
+dat2$area1 <- c(dat0$area, rep(NA,n))
+dat2$area2 <- c(rep(NA,n), dat0$area)
 
 fit1_b <- inla(
     formula = list(ap1, ap5) ~ -1 +
         b0_a1 + b0_a5 + peso_a1 + peso_a5 +
-        f(mun1, model = "iid") + f(mun2, model = "iid"),
+        f(area1, model = "iid") +
+        f(area2, model = "iid"),
     family = rep("binomial", 2),
     data = dat2,
     control.predictor = list(link = 1))
@@ -128,56 +149,17 @@ fit1_b$summary.fixed
 
 ff2b <- list(ap1, ap5) ~ -1 +
         b0_a1 + b0_a5 + peso_a1 + peso_a5 +
-        f(mun1, model = "iid") + f(mun2, copy = 'mun1', fixed = FALSE),
+        f(area1, model = "iid") +
+        f(area2, copy = 'area1', fixed = FALSE)
 
 fit2_b <- inla(
-    formula = ff2b
+    formula = ff2b,
     family = rep("binomial", 2),
     data = dat2,
     control.predictor = list(link = 1)
 )
 
 fit2_b$summary.hyperpar
-
-##
-library(geobr)
-
-mg_muni <- read_municipality(
-  code_muni = "MG", 
-  year = 2020, 
-  showProgress = TRUE
-)
-
-head(mg_muni)
-
-dim(mg_muni)
-
-library(ggplot2)
-
-ggplot() +
-    geom_sf(data = mg_muni, fill = "#2D3E50",
-            color = "#FEBF57", size = 0.15) +
-  labs(title = "Municipalities of Minas Gerais",
-       caption = "Source: IBGE via geobr") +
-    theme_minimal()
-
-head(sinasc, 2)
-
-str(sinasc$CODMUNRES)
-
-id_map <- pmatch(
-    x = sinasc$CODMUNRES,
-    table = substr(mg_muni$code_muni, 1,6),
-    duplicates.ok = TRUE)
-summary(id_map)
-
-dat2$area1 <- c(id_map, rep(NA, n))
-dat2$area2 <- c(rep(NA, n), id_map)
-
-library(spdep)
-
-viz <- poly2nb(mg_muni)
-nb2INLA(file = "grafo", nb = viz) ## 
 
 fit3_b <- inla(
     formula = list(ap1, ap5) ~ -1 +
@@ -202,15 +184,15 @@ fit3_b$summary.hyperpar
 ##   NOTA: \beta_v coef de associacao
 
 data3 <- data.frame(
-    ap1 = c(dataf$ap1, rep(NA, n),  rep(NA, n)),
-    ap5 = c(rep(NA, n), dataf$ap5,  rep(NA, n)),
+    ap1 = c(dat0$ap1, rep(NA, n),  rep(NA, n)),
+    ap5 = c(rep(NA, n), dat0$ap5,  rep(NA, n)),
     zero= c(rep(NA, n), rep(NA,n),  rep(0, n)),
     lnk = rep(1:3, each = n),
     b0_a1 = rep(c(1,0,0), c(n,n,n)),
     b0_a5 = rep(c(0,1,0), c(n,n,n)),
-    peso1 = c(dataf$peso, rep(NA, n), dataf$peso),
-    peso5 = c(rep(NA, n), dataf$peso, rep(NA, n)), ## eff. differencial de peso em ap5
-    area  = c(id_map,     rep(NA, n), id_map),
+    peso1 = c(dat0$peso, rep(NA, n), dat0$peso),
+    peso5 = c(rep(NA, n), dat0$peso, rep(NA, n)), ## eff. differencial de peso em ap5
+    area  = c(dat0$area,  rep(NA, n), dat0$area),
     vi    = c(rep(NA, n), rep(NA, n), 1:n),
     vi_w  = rep(c(0,-1), c(2*n, n)),
     vi_cp = c(rep(NA, n), 1:n, rep(NA, n))
