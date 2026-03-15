@@ -183,40 +183,59 @@ fit3_b$summary.hyperpar
 ## eta2_i: a_2 + beta_2 * peso_i + beta_v * v_i
 ##   NOTA: \beta_v coef de associacao
 
-data3 <- data.frame(
-    ap1 = c(dat0$ap1, rep(NA, n),  rep(NA, n)),
-    ap5 = c(rep(NA, n), dat0$ap5,  rep(NA, n)),
-    zero= c(rep(NA, n), rep(NA,n),  rep(0, n)),
-    lnk = rep(1:3, each = n),
-    b0_a1 = rep(c(1,0,0), c(n,n,n)),
-    b0_a5 = rep(c(0,1,0), c(n,n,n)),
-    peso1 = c(dat0$peso, rep(NA, n), dat0$peso),
-    peso5 = c(rep(NA, n), dat0$peso, rep(NA, n)), ## eff. differencial de peso em ap5
-    area  = c(dat0$area,  rep(NA, n), dat0$area),
-    vi    = c(rep(NA, n), rep(NA, n), 1:n),
-    vi_w  = rep(c(0,-1), c(2*n, n)),
-    vi_cp = c(rep(NA, n), 1:n, rep(NA, n))
-)
-
-fff <- list(ap1, ap5, zero) ~ -1 +
-    b0_a1 + b0_a5 + peso1 + peso5 +
-    f(area, model = "besagproper", graph = "grafo") +
-    f(vi, vi_w, model = "iid",
-      hyper = list(theta = list(initial = -20, fixed = TRUE))) +
-    f(vi_cp, copy = 'vi', fixed = FALSE)
-
-
-fit3z <- inla(
-    formula = fff, 
-    family = c(rep("binomial", 2), "gaussian"),
-    control.family = list(
-        list(),
-        list(),
-        list(hyper = list(prec = list(initial = 20, fixed = TRUE)))),
-    data = data3,
-    control.mode = list(
-        theta = c(3, 1.6, 0),
-        restart = TRUE),
-    control.predictor = list(link = lnk),
-    verbose = TRUE##, inla.call = 'remote'
-)
+if(FALSE) { ### inneficient and wasteful
+    data3 <- data.frame(
+        ap1 = c(dat0$ap1, rep(NA, n),  rep(NA, n)),
+        ap5 = c(rep(NA, n), dat0$ap5,  rep(NA, n)),
+        zero= c(rep(NA, n), rep(NA,n),  rep(0, n)),
+        lnk = rep(1:3, each = n),
+        b0_a1 = rep(c(1,0,0), c(n,n,n)),
+        b0_a5 = rep(c(0,1,0), c(n,n,n)),
+        peso1 = c(dat0$peso, rep(NA, n), dat0$peso),
+        peso5 = c(rep(NA, n), dat0$peso, rep(NA, n)), ## eff. differencial de peso em ap5
+        area  = c(dat0$area,  rep(NA, n), dat0$area),
+        vi    = c(rep(NA, n), rep(NA, n), 1:n),
+        vi_w  = rep(c(0,-1), c(2*n, n)),
+        vi_cp = c(rep(NA, n), 1:n, rep(NA, n))
+    )
+    fff <- list(ap1, ap5, zero) ~ -1 +
+        b0_a1 + b0_a5 + peso1 + peso5 +
+        f(area, model = "besagproper", graph = "grafo") +
+        f(vi, vi_w, model = "iid",
+          hyper = list(theta = list(initial = -20, fixed = TRUE))) +
+        f(vi_cp, copy = 'vi', fixed = FALSE)
+    fit3z <- inla(
+        formula = fff, 
+        family = c(rep("binomial", 2), "gaussian"),
+        control.family = list(
+            list(),
+            list(),
+            list(hyper = list(prec = list(initial = 20, fixed = TRUE)))),
+        data = data3,
+        control.mode = list(
+            theta = c(3, 1.6, 0),
+            restart = TRUE),
+        control.predictor = list(link = lnk),
+        verbose = TRUE##, inla.call = 'remote'
+    )
+} else {
+    ## efficient, no wasteful way
+    ##   v_i = beta_1 * peso_i + u_mun(i)
+    ##       = peso[i,]\beta_1 + Au[i,] u
+    ##       = [peso, Au][i,] [\beta_1, u]
+    ## where [peso, Au] is a given (fixed) matrix
+    ## define v = [\beta_1, u]
+    ## next we have
+    ##   0.0 = beta_1 * peso_i + u_mun(i) - v_i
+    ##       = [peso, Au][i, ] [\beta_1, u] - [peso, Au][i, ] v
+    ## and 
+    ## eta2_i = a_2 + beta_2 * peso_i + beta_v * v_i
+    ##        = [1, peso][i, ][a_2, \beta_2] + \beta_v[peso, Au][i, ]v
+    ## NOTE: now the v is a vector of length = 1 + n_areas
+    ##          which gives a model much lower dimentional than the wasteful one
+    ## easy to implement using stack see the (rcode/stack.R)
+    ## where the A for the 0-observation will have [peso, Au] as projector,
+    ## Au is a matrix with n lines and n_areas columns,
+    ##  each line is 1 at the j-column, j is the column index for
+    ##   the area where observation i is
+}
