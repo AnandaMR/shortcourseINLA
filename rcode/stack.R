@@ -60,7 +60,7 @@ hist(dat0$peso)
 dat0$pesoCat = findInterval(dat0$peso, c(-Inf, 2:9/2, Inf))
 table(dat0$pesoCat)
 
-## eta_i = \beta_0 + \beta_1 * peso_i + f_k(peso_i) + u_i
+## eta_i = f_k(peso_i) + u_i
 
 fs1 <- ap1 ~ 0 + 
     f(pesoCat, model = 'rw2', constr = FALSE,
